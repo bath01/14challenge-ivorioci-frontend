@@ -37,7 +37,7 @@ function AppContent() {
       {!isAuthPage && (
         <footer className="text-center py-6">
           <p className="text-xs tracking-widest" style={{ color: "#444" }}>
-            CHALLENGE 14-14-14 // JOUR 13 // MARS 2026
+            
           </p>
         </footer>
       )}

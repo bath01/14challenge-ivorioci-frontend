@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import FlagBar from '../components/FlagBar';
+import { mockUsers } from '../data/mockData';
 
 const CI_O = '#FF8C00';
 const CI_G = '#009E49';
@@ -24,20 +25,37 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      // TODO: remplace par ton appel API réel
+      // Simulation délai réseau
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      // ——— Auth mock ———
+      // TODO: remplace par l'appel API réel
       // const response = await api.post('/auth/login', credentials);
       // localStorage.setItem('token', response.data.token);
 
-      // Simulation pour l'instant
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      navigate('/');
+      const user = mockUsers.find(
+        u => u.email === credentials.email && u.password === credentials.password
+      );
+
+      if (!user) {
+        setErrorMessage('Email ou mot de passe incorrect');
+        setIsLoading(false);
+        return;
+      }
+
+      // Sauvegarde en localStorage
+      localStorage.setItem('user', JSON.stringify({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+      }));
+      localStorage.setItem('token', `mock-token-${user.id}`);
+
+      navigate('/home');
 
     } catch (err) {
-      setErrorMessage(
-        err.response?.status === 401
-          ? 'Email ou mot de passe incorrect'
-          : 'Une erreur est survenue, réessayez'
-      );
+      setErrorMessage('Une erreur est survenue, réessayez');
     } finally {
       setIsLoading(false);
     }
@@ -68,6 +86,20 @@ export default function LoginPage() {
           </h1>
           <p style={{ fontSize: 13, color: TEXT_S, margin: 0 }}>
             Connectez-vous à votre compte
+          </p>
+        </div>
+
+        {/* ——— Hint comptes de test ——— */}
+        <div style={{
+          padding: '10px 14px', borderRadius: 10, marginBottom: 20,
+          background: `${CI_G}10`, border: `1px solid ${CI_G}30`,
+          fontSize: 11, color: TEXT_S,
+        }}>
+          <p style={{ margin: '0 0 4px', color: CI_G, fontWeight: 600 }}>
+            💡 Comptes de test disponibles
+          </p>
+          <p style={{ margin: 0, color: TEXT_DIM }}>
+            demo@ivorioci.com / demo1234
           </p>
         </div>
 
@@ -149,7 +181,8 @@ export default function LoginPage() {
             {isLoading ? (
               <>
                 <span style={{
-                  width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)',
+                  width: 14, height: 14,
+                  border: '2px solid rgba(255,255,255,0.3)',
                   borderTopColor: '#fff', borderRadius: '50%',
                   display: 'inline-block',
                   animation: 'spin 0.8s linear infinite',
