@@ -1,4 +1,5 @@
 // components/SecureVideoPlayer.jsx
+// Lecteur vidéo sécurisé avec streaming authentifié et contrôle audio
 import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import { catalogueService } from '../services/api';
 
@@ -13,100 +14,77 @@ const SecureVideoPlayer = forwardRef(({ videoId, autoPlay = false, onTimeUpdate,
   const isFirstLoad = useRef(true);
   const loadInProgress = useRef(false);
 
-  // Exposer la référence vidéo au parent
+  // Expose la référence vidéo au parent
   useImperativeHandle(ref, () => videoRef.current);
 
-  // Fonction de rafraîchissement du token
-  const refreshToken = async () => {
+  // Rafraîchit le token JWT si expiré
+  const tryRefreshToken = async () => {
     try {
-      const refreshToken = localStorage.getItem('refreshToken');
-      if (!refreshToken) {
-        console.log('[SecureVideoPlayer] Pas de refresh token');
-        return false;
-      }
-      
+      const rt = localStorage.getItem('refreshToken');
+      if (!rt) return false;
+
       const response = await fetch('https://api.ivorioci.chalenge14.com/auth/refresh', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ refreshToken })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: rt }),
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok && data.success && data.data) {
         localStorage.setItem('token', data.data.accessToken);
         if (data.data.refreshToken) {
           localStorage.setItem('refreshToken', data.data.refreshToken);
         }
-        console.log('[SecureVideoPlayer] ✅ Token rafraîchi');
         return true;
       }
       return false;
-    } catch (error) {
-      console.error('[SecureVideoPlayer] Erreur refresh:', error);
+    } catch {
       return false;
     }
   };
 
-  // Fonction pour charger la vidéo
+  // Charge la vidéo avec authentification
   const loadVideoWithToken = async (retryCount = 0) => {
-    // Éviter les chargements multiples simultanés
-    if (loadInProgress.current) {
-      console.log('[SecureVideoPlayer] Chargement déjà en cours, ignoré');
-      return;
-    }
-    
+    if (loadInProgress.current) return;
     loadInProgress.current = true;
-    
+
     try {
       const token = localStorage.getItem('token');
-      if (!token) {
-        throw new Error('Non authentifié - Veuillez vous connecter');
-      }
-      
-      const streamUrl = catalogueService.getStreamUrl(videoId);
-      console.log('[SecureVideoPlayer] Chargement vidéo:', videoId);
-      
-      const response = await fetch(streamUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      if (!token) throw new Error('Non authentifié — veuillez vous connecter');
+
+      const url = catalogueService.getStreamUrl(videoId);
+
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` },
       });
-      
-      console.log('[SecureVideoPlayer] Status:', response.status);
-      
+
+      // Token expiré — tente un refresh
       if (response.status === 401 && retryCount === 0) {
-        console.log('[SecureVideoPlayer] Token expiré, tentative refresh...');
-        const refreshSuccess = await refreshToken();
-        
-        if (refreshSuccess) {
-          console.log('[SecureVideoPlayer] Refresh réussi, nouvelle tentative...');
+        const refreshed = await tryRefreshToken();
+        if (refreshed) {
           loadInProgress.current = false;
-          return loadVideoWithToken(retryCount + 1);
-        } else {
-          throw new Error('Session expirée, veuillez vous reconnecter');
+          return loadVideoWithToken(1);
         }
+        throw new Error('Session expirée, veuillez vous reconnecter');
       }
-      
-      if (!response.ok) {
-        throw new Error(`Erreur HTTP ${response.status}`);
-      }
-      
+
+      if (!response.ok) throw new Error(`Erreur HTTP ${response.status}`);
+
+      const contentType = response.headers.get('Content-Type') || '';
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      
-      // Nettoyer l'ancienne URL
-      if (streamUrl && streamUrl !== url) {
-        URL.revokeObjectURL(streamUrl);
-      }
-      
-      setStreamUrl(url);
-      console.log('[SecureVideoPlayer] ✅ Vidéo chargée, taille:', blob.size);
-      
+
+      // Force le type MIME correct pour préserver la qualité audio
+      const correctedBlob = new Blob([blob], {
+        type: contentType.includes('video') ? contentType : 'video/mp4',
+      });
+
+      // Nettoie l'ancienne URL blob
+      if (streamUrl) URL.revokeObjectURL(streamUrl);
+
+      const objectUrl = URL.createObjectURL(correctedBlob);
+      setStreamUrl(objectUrl);
     } catch (err) {
-      console.error('[SecureVideoPlayer] ❌ Erreur:', err.message);
       setError(err.message);
     } finally {
       setIsLoading(false);
@@ -114,77 +92,58 @@ const SecureVideoPlayer = forwardRef(({ videoId, autoPlay = false, onTimeUpdate,
     }
   };
 
-  // Charger la vidéo quand l'ID change
+  // Recharge à chaque changement de vidéo
   useEffect(() => {
     setIsLoading(true);
     setError(null);
-    loadVideoWithToken();
+    setStreamUrl(null);
     isFirstLoad.current = true;
-    
+    loadVideoWithToken();
+
     return () => {
-      if (streamUrl) {
-        URL.revokeObjectURL(streamUrl);
-      }
+      if (streamUrl) URL.revokeObjectURL(streamUrl);
     };
   }, [videoId]);
 
-  // Gérer l'autoPlay après le chargement (éviter les conflits)
+  // AutoPlay une fois la vidéo prête
   useEffect(() => {
-    if (videoRef.current && !isLoading && streamUrl) {
-      // S'assurer que la vidéo est complètement chargée avant de jouer
-      const video = videoRef.current;
-      
-      const handleCanPlay = () => {
-        if (autoPlay && isFirstLoad.current) {
-          video.play()
-            .then(() => {
-              console.log('[SecureVideoPlayer] Lecture démarrée');
-              isFirstLoad.current = false;
-            })
-            .catch(e => {
-              console.log('[SecureVideoPlayer] AutoPlay bloqué:', e.message);
-              isFirstLoad.current = false;
-            });
-        }
-        video.removeEventListener('canplay', handleCanPlay);
-      };
-      
-      video.addEventListener('canplay', handleCanPlay);
-      
-      // Si la vidéo est déjà prête
-      if (video.readyState >= 3) {
-        handleCanPlay();
+    if (!videoRef.current || isLoading || !streamUrl) return;
+
+    const video = videoRef.current;
+
+    const handleCanPlay = () => {
+      if (autoPlay && isFirstLoad.current) {
+        video.play()
+          .then(() => { isFirstLoad.current = false; })
+          .catch(() => { isFirstLoad.current = false; });
       }
-      
-      return () => {
-        video.removeEventListener('canplay', handleCanPlay);
-      };
-    }
+      video.removeEventListener('canplay', handleCanPlay);
+    };
+
+    video.addEventListener('canplay', handleCanPlay);
+    if (video.readyState >= 3) handleCanPlay();
+
+    return () => video.removeEventListener('canplay', handleCanPlay);
   }, [autoPlay, isLoading, streamUrl]);
+
+  // ——— États d'affichage ———
 
   if (isLoading) {
     return (
       <div style={{
         width: '100%', height: '100%',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: '#000',
-        flexDirection: 'column',
-        gap: 16
+        background: '#000', flexDirection: 'column', gap: 16,
       }}>
         <div style={{
           width: 40, height: 40,
           border: `3px solid ${CI_O}20`,
           borderTop: `3px solid ${CI_O}`,
           borderRadius: '50%',
-          animation: 'spin 1s linear infinite'
+          animation: 'spin 1s linear infinite',
         }} />
         <div style={{ color: TEXT_P, fontSize: 14 }}>Chargement de la vidéo...</div>
-        <style>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}</style>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -194,9 +153,7 @@ const SecureVideoPlayer = forwardRef(({ videoId, autoPlay = false, onTimeUpdate,
       <div style={{
         width: '100%', height: '100%',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: '#000',
-        flexDirection: 'column',
-        gap: 16
+        background: '#000', flexDirection: 'column', gap: 16,
       }}>
         <div style={{ fontSize: 48 }}>⚠️</div>
         <div style={{ color: '#ff6b6b', fontSize: 14, textAlign: 'center', maxWidth: 300 }}>
@@ -205,14 +162,9 @@ const SecureVideoPlayer = forwardRef(({ videoId, autoPlay = false, onTimeUpdate,
         <button
           onClick={() => window.location.href = '/login'}
           style={{
-            padding: '8px 20px',
-            borderRadius: 8,
-            border: 'none',
-            background: CI_O,
-            color: '#FFF',
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 600
+            padding: '8px 20px', borderRadius: 8, border: 'none',
+            background: CI_O, color: '#FFF', cursor: 'pointer',
+            fontSize: 12, fontWeight: 600,
           }}>
           Se reconnecter
         </button>
@@ -225,7 +177,7 @@ const SecureVideoPlayer = forwardRef(({ videoId, autoPlay = false, onTimeUpdate,
       <div style={{
         width: '100%', height: '100%',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: '#000'
+        background: '#000',
       }}>
         <div style={{ color: TEXT_P }}>Aucune vidéo disponible</div>
       </div>
@@ -237,24 +189,21 @@ const SecureVideoPlayer = forwardRef(({ videoId, autoPlay = false, onTimeUpdate,
       ref={videoRef}
       src={streamUrl}
       preload="auto"
+      volume={1.0}
       style={{
         width: '100%',
         height: '100%',
         objectFit: 'contain',
-        backgroundColor: '#000'
+        backgroundColor: '#000',
       }}
-      onTimeUpdate={(e) => {
-        if (onTimeUpdate) onTimeUpdate(e);
-      }}
-      onEnded={(e) => {
-        if (onEnded) onEnded(e);
-      }}
+      onTimeUpdate={onTimeUpdate}
+      onEnded={onEnded}
       onLoadedMetadata={(e) => {
-        console.log('[SecureVideoPlayer] Métadonnées chargées');
+        // S'assure que le volume est au max au chargement
+        e.currentTarget.volume = 1.0;
+        e.currentTarget.muted = false;
         if (onLoadedMetadata) onLoadedMetadata(e);
       }}
-      onPlay={() => console.log('[SecureVideoPlayer] Lecture démarrée')}
-      onPause={() => console.log('[SecureVideoPlayer] Lecture en pause')}
     />
   );
 });

@@ -16,6 +16,8 @@ import {
   FullscreenIcon,
   StarIcon,
   FilmIcon,
+  VolumeIcon,
+  VolumeMuteIcon,
 } from "../components/Icons";
 
 const CI_O = "#FF8C00";
@@ -64,6 +66,8 @@ export default function PlayerPage() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [video, setLocalVideo] = useState(null);
+  const [volume, setVolume] = useState(1.0);
+  const [isMuted, setIsMuted] = useState(false);
 
   // ——— Charger les vidéos si nécessaire ———
   useEffect(() => {
@@ -100,27 +104,12 @@ export default function PlayerPage() {
     init();
   }, [id, loadVideos, videos, setVideo, setPlayerTime, getProgress]);
 
-  // Synchroniser la vidéo quand elle est chargée
+  // Synchroniser la vitesse de lecture uniquement
   useEffect(() => {
     if (videoElementRef.current && !isLoading && video) {
-      // Restaurer la progression
-      if (playerTime > 0) {
-        videoElementRef.current.currentTime = playerTime;
-      }
-
-      // Synchroniser la vitesse
       videoElementRef.current.playbackRate = playbackSpeed;
-
-      // Synchroniser l'état de lecture
-      if (isPlaying) {
-        videoElementRef.current
-          .play()
-          .catch((e) => console.log("[PlayerPage] Lecture:", e));
-      } else {
-        videoElementRef.current.pause();
-      }
     }
-  }, [isLoading, video, playerTime, isPlaying, playbackSpeed]);
+  }, [playbackSpeed, isLoading, video]);
 
   // Ajoutez cet effet dans PlayerPage.jsx pour nettoyer les ressources
   useEffect(() => {
@@ -150,24 +139,46 @@ export default function PlayerPage() {
     }
   }, [video, isPlaying, playerTime, addToHistory]);
 
-  // Gestion du temps de la vidéo
+  // Synchronise le timer avec la vidéo réelle
   const handleTimeUpdate = (e) => {
-    const currentTime = e.currentTarget.currentTime;
-    setPlayerTime(currentTime);
-  };
-
-  const handleEnded = () => {
-    console.log("[PlayerPage] Vidéo terminée");
-    togglePlay();
-    if (video) {
-      addToHistory(video.id, 100);
+    const currentTime = Math.floor(e.currentTarget.currentTime);
+    if (currentTime !== playerTime) {
+      setPlayerTime(currentTime);
     }
   };
 
+  const handleEnded = () => {
+    togglePlay();
+    if (video) addToHistory(video.id, 100);
+  };
+
   const handleLoadedMetadata = (e) => {
-    console.log("[PlayerPage] Métadonnées chargées");
-    if (video && playerTime > 0 && videoElementRef.current) {
-      videoElementRef.current.currentTime = playerTime;
+    const el = e.currentTarget;
+    // Restaure la progression sauvegardée
+    if (video && playerTime > 0) {
+      el.currentTime = playerTime;
+    }
+    // Applique le volume
+    el.volume = volume;
+    el.muted = isMuted;
+  };
+
+  // Contrôle du volume
+  const handleVolumeChange = (e) => {
+    const val = Number(e.target.value);
+    setVolume(val);
+    setIsMuted(val === 0);
+    if (videoElementRef.current) {
+      videoElementRef.current.volume = val;
+      videoElementRef.current.muted = val === 0;
+    }
+  };
+
+  const handleToggleMute = () => {
+    const newMuted = !isMuted;
+    setIsMuted(newMuted);
+    if (videoElementRef.current) {
+      videoElementRef.current.muted = newMuted;
     }
   };
 
@@ -436,8 +447,35 @@ export default function PlayerPage() {
                   color: "rgba(255,255,255,0.7)",
                 }}
               >
-                {fmtTime(playerTime)} / {fmtTime(video.duration)}
+                {fmtTime(Math.floor(playerTime))} / {fmtTime(video.duration)}
               </span>
+
+              {/* ——— Contrôle du volume ——— */}
+              <button
+                onClick={handleToggleMute}
+                style={{
+                  background: "none", border: "none",
+                  cursor: "pointer", padding: 4, display: "flex",
+                }}
+              >
+                {isMuted || volume === 0
+                  ? <VolumeMuteIcon size={18} color="#FFF" />
+                  : <VolumeIcon size={18} color="#FFF" />
+                }
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={isMuted ? 0 : volume}
+                onChange={handleVolumeChange}
+                style={{
+                  width: 70,
+                  accentColor: CI_O,
+                  cursor: "pointer",
+                }}
+              />
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
